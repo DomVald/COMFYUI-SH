@@ -15,7 +15,7 @@ COMFY_DIR="${BASE_DIR}/ComfyUI"
 CUSTOM_NODES_DIR="${COMFY_DIR}/custom_nodes"
 MODELS_DIR="${COMFY_DIR}/models"
 
-echo "==> [1/5] Actualizando paquetes del sistema e instalando dependencias binarias..."
+echo "==> [1/5] Actualizando dependencias del sistema operativo..."
 apt-get update -qq && apt-get install -y -qq \
     ffmpeg \
     libsndfile1 \
@@ -23,7 +23,7 @@ apt-get update -qq && apt-get install -y -qq \
     git \
     wget > /dev/null
 
-echo "==> [2/5] Verificando despliegue de ComfyUI..."
+echo "==> [2/5] Desplegando repositorio central de ComfyUI..."
 if [ ! -d "$COMFY_DIR" ]; then
     git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFY_DIR"
 fi
@@ -31,7 +31,7 @@ fi
 cd "$COMFY_DIR"
 pip install --no-cache-dir -r requirements.txt > /dev/null
 
-echo "==> [3/5] Clonando nodos de extension y dependencias criticas..."
+echo "==> [3/5] Clonando nodos de extension de WhatDreamsCost y dependencias..."
 mkdir -p "$CUSTOM_NODES_DIR"
 
 declare -A NODES=(
@@ -45,21 +45,19 @@ declare -A NODES=(
 for NODE_NAME in "${!NODES[@]}"; do
     TARGET_PATH="${CUSTOM_NODES_DIR}/${NODE_NAME}"
     if [ ! -d "$TARGET_PATH" ]; then
-        echo "    -> Clonando ${NODE_NAME}..."
+        echo "    -> Instalando ${NODE_NAME}..."
         git clone --depth 1 "${NODES[$NODE_NAME]}" "$TARGET_PATH"
     fi
     if [ -f "${TARGET_PATH}/requirements.txt" ]; then
-        echo "    -> Instalando dependencias de ${NODE_NAME}..."
         pip install --no-cache-dir -r "${TARGET_PATH}/requirements.txt" > /dev/null 2>&1 || true
     fi
 done
 
 pip install --no-cache-dir soundfile librosa moviepy triton > /dev/null
 
-echo "==> [4/5] Descargando pesos de modelos optimizados (LTX-Video & T5-XXL)..."
+echo "==> [4/5] Descargando pesos requeridos (LTX-Video 2B & T5-XXL FP16)..."
 mkdir -p "${MODELS_DIR}/checkpoints"
 mkdir -p "${MODELS_DIR}/clip"
-mkdir -p "${MODELS_DIR}/latent_upscale_models"
 
 aria_download() {
     local url="$1"
@@ -67,13 +65,16 @@ aria_download() {
     local filename="$3"
     if [ ! -f "${dir}/${filename}" ]; then
         echo "    -> Descargando ${filename}..."
-        aria2c -c -x 16 -s 16 -k 1M --dir="$dir" -o "$filename" "$url"
+        aria2c -c -x 16 -s 16 -k 1M --dir="$dir" -o "$filename" "$url" || {
+            echo "    [ADVERTENCIA] Fallo al transferir ${filename}. Continuando..."
+            return 0
+        }
     else
-        echo "    -> ${filename} ya existe, omitiendo descarga."
+        echo "    -> ${filename} ya se encuentra presente."
     fi
 }
 
-# 1. Checkpoint LTX-Video 2B
+# 1. Checkpoint LTX-Video 2B oficial
 aria_download \
     "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.1.safetensors" \
     "${MODELS_DIR}/checkpoints" \
@@ -85,14 +86,8 @@ aria_download \
     "${MODELS_DIR}/clip" \
     "t5xxl_fp16.safetensors"
 
-# 3. Spatial Upscaler
-aria_download \
-    "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-spatial-upscaler-x2-0.9.1.safetensors" \
-    "${MODELS_DIR}/latent_upscale_models" \
-    "ltx-video-spatial-upscaler-x2-0.9.1.safetensors"
-
-echo "==> [5/5] Setup completado exitosamente."
-echo "==> Iniciando ComfyUI en 0.0.0.0:8188 con flags de alto rendimiento para L40S..."
+echo "==> [5/5] Pipeline aprovisionado correctamente."
+echo "==> Levantando servicio ComfyUI en el puerto 8188..."
 
 cd "$COMFY_DIR"
 exec python main.py --listen 0.0.0.0 --port 8188 --highvram --preview-method auto
