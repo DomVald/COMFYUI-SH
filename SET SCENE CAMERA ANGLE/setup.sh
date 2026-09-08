@@ -26,7 +26,7 @@ cd custom_nodes
 git clone -q https://github.com/ltdrdata/ComfyUI-Manager.git
 git clone -q https://github.com/cubiq/ComfyUI_IPAdapter_plus.git
 git clone -q https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git
-git clone -q https://github.com/space-nuko/ComfyUI-OpenPose-Editor.git
+git clone -q https://github.com/huchenlei/ComfyUI_3d_pose_editor.git
 
 echo "[4/6] Resolviendo requerimientos de nodos..."
 for dir in */ ; do
