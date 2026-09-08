@@ -1,86 +1,68 @@
 #!/bin/bash
 
 # ==============================================================================
-# Orquestador de Despliegue Zero-Touch: Motor ComfyUI para TESS / ValTech
+# Orquestador EFÍMERO (Alta Velocidad): Motor ComfyUI para TESS / ValTech
 # Arquitectura: SDXL + IP-Adapter Plus + ControlNet Advanced + OpenPose Editor
-# Optimizado para: RunPod (48GB VRAM / 50GB RAM)
+# Estrategia: Cero persistencia, instalación directa global, descargas paralelas
 # ==============================================================================
 
 set -e
 
-echo "[0/7] Verificando entorno de persistencia (RunPod)..."
-if [ -d "/workspace" ]; then
-    cd /workspace
-    echo "Directorio /workspace detectado. Navegando al volumen persistente..."
-else
-    echo "ADVERTENCIA: /workspace no encontrado. Instalando en el directorio actual ($(pwd))."
-fi
+echo "[1/6] Preparando contenedor para despliegue ultra-rápido..."
+# Instalamos aria2c para descargas paralelas hiper-rápidas
+apt-get update -qq && apt-get install -yqq aria2 git python3-pip
 
-echo "[1/7] Inicializando variables y definiendo estructura de directorios..."
-BASE_DIR="ComfyUI_Studio"
-git clone -q https://github.com/comfyanonymous/ComfyUI.git $BASE_DIR
-cd $BASE_DIR
+echo "[2/6] Clonando núcleo y dependencias base..."
+git clone -q https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI_Studio
+cd /workspace/ComfyUI_Studio
 
-echo "[2/7] Configurando el Entorno Virtual (Python venv)..."
-python3 -m venv venv
-source venv/bin/activate
+# Instalación directa, ignorando bloqueos del SO, ya que el contenedor morirá pronto
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --break-system-packages -q
+pip install -r requirements.txt --break-system-packages -q
 
-echo "[3/7] Instalando PyTorch (Optimizacion CUDA 12.x) y dependencias base..."
-pip install --upgrade pip -q
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 -q
-pip install -r requirements.txt -q
-
-echo "[4/7] Clonando Nodos Personalizados (Custom Nodes)..."
+echo "[3/6] Inyectando Nodos Personalizados..."
 cd custom_nodes
 
 git clone -q https://github.com/ltdrdata/ComfyUI-Manager.git
 git clone -q https://github.com/cubiq/ComfyUI_IPAdapter_plus.git
 git clone -q https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git
-
-# --- SOLUCIÓN APLICADA: Reemplazo de posex por OpenPose-Editor ---
 git clone -q https://github.com/space-nuko/ComfyUI-OpenPose-Editor.git
-# -----------------------------------------------------------------
 
-echo "[5/7] Instalando dependencias de los Nodos Personalizados..."
+echo "[4/6] Resolviendo requerimientos de nodos..."
 for dir in */ ; do
     if [ -f "$dir/requirements.txt" ]; then
-        echo "Instalando requerimientos para $dir..."
-        pip install -r "$dir/requirements.txt" -q
+        pip install -r "$dir/requirements.txt" --break-system-packages -q
     fi
 done
-
 cd ..
 
-echo "[6/7] Descargando Modelos Fundacionales y Tensores de Control..."
-WGET_OPT="-c -q --show-progress"
+echo "[5/6] Acelerando descarga de tensores (Conexiones Paralelas 16x)..."
+# Configuración global para aria2c
+ARIA_OPT="-x 16 -s 16 -k 1M -q --allow-overwrite=true"
 
+# Pre-creación de directorios
+mkdir -p models/ipadapter models/clip_vision models/controlnet
+
+# Descargamos todo en paralelo enviando los procesos a background (&)
 echo "Descargando Juggernaut XL..."
-wget $WGET_OPT -O models/checkpoints/juggernautXL_v11.safetensors "https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/resolve/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"
+aria2c $ARIA_OPT -d models/checkpoints -o juggernautXL_v11.safetensors "https://huggingface.co/RunDiffusion/Juggernaut-XL-v9/resolve/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors" &
 
-echo "Descargando IP-Adapter Plus SDXL..."
-mkdir -p models/ipadapter
-wget $WGET_OPT -O models/ipadapter/ip-adapter-plus_sdxl_vit-h.safetensors "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors"
+echo "Descargando IP-Adapter..."
+aria2c $ARIA_OPT -d models/ipadapter -o ip-adapter-plus_sdxl_vit-h.safetensors "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors" &
 
-echo "Descargando CLIP Vision (Requerido por IP-Adapter)..."
-mkdir -p models/clip_vision
-wget $WGET_OPT -O models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors"
+echo "Descargando CLIP Vision..."
+aria2c $ARIA_OPT -d models/clip_vision -o CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors" &
 
-echo "Descargando ControlNet OpenPose para SDXL..."
-mkdir -p models/controlnet
-wget $WGET_OPT -O models/controlnet/thibaud_xl_openpose.safetensors "https://huggingface.co/lllyasviel/sd_control_collection/resolve/main/thibaud_xl_openpose.safetensors"
+echo "Descargando ControlNet..."
+aria2c $ARIA_OPT -d models/controlnet -o thibaud_xl_openpose.safetensors "https://huggingface.co/lllyasviel/sd_control_collection/resolve/main/thibaud_xl_openpose.safetensors" &
 
-echo "[7/7] Generando ejecutable de arranque optimizado para 48GB VRAM..."
-cat << 'EOF' > start_tess_engine.sh
-#!/bin/bash
-source venv/bin/activate
-python main.py --highvram --disable-smart-memory --listen 0.0.0.0 --port 8188
-EOF
+# Esperamos a que todas las descargas paralelas terminen antes de iniciar
+wait
+echo "Descargas completadas."
 
-chmod +x start_tess_engine.sh
-
-echo "=============================================================================="
-echo "Instalación completada. Inicializando servidor ComfyUI..."
-echo "Podrás acceder a la interfaz en breve desde el panel 'Connect' de RunPod."
+echo "[6/6] Inicializando Servidor ComfyUI (48GB VRAM Activa)..."
+echo "El servidor estará en línea en un instante. Usa 'Connect to HTTP Service [Port 8188]'."
 echo "=============================================================================="
 
-./start_tess_engine.sh
+# Ejecutamos directamente, reteniendo la VRAM
+python3 main.py --highvram --disable-smart-memory --listen 0.0.0.0 --port 8188
